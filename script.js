@@ -131,7 +131,10 @@
     
     window.fetch = async function(...args) {
       const startTime = Date.now();
-      const requestUrl = args?.[0]?.toString() || '';
+      
+      // Properly handle Request objects and string URLs
+      const request = args[0] instanceof Request ? args[0] : new Request(args[0], args[1]);
+      const requestUrl = request.url;
       const requestPath = extractPathFromUrl(requestUrl);
       const requestBody = processRequestBody(args?.[1]?.body);
       
@@ -151,8 +154,8 @@
         const requestData = {
           type: "NETWORK_REQUEST",
           request: {
-            url: requestUrl || response.url,
-            method: args?.[1]?.method || "GET",
+            url: requestUrl,
+            method: request.method,
             status: response.status,
             statusText: response.statusText,
             responseBody: responseText,
@@ -160,7 +163,7 @@
             timestamp: new Date().toISOString(),
             duration: Date.now() - startTime,
             origin: window.location.origin,
-            headers: args?.[1]?.headers ? Object.fromEntries(new Headers(args?.[1]?.headers)) : {},
+            headers: Object.fromEntries(request.headers),
             path: requestPath
           }
         };
@@ -178,11 +181,11 @@
           type: "NETWORK_REQUEST",
           request: {
             url: requestUrl,
-            method: args?.[1]?.method || "GET",
+            method: request.method,
             origin: window.location.origin,
             timestamp: new Date().toISOString(),
             duration: Date.now() - startTime,
-            headers: args?.[1]?.headers ? Object.fromEntries(new Headers(args?.[1]?.headers)) : {},
+            headers: Object.fromEntries(request.headers),
             requestBody: requestBody,
             path: requestPath,
             error: { 
