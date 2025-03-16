@@ -537,13 +537,13 @@
       // Helper to safely stringify objects
       const safeStringify = (obj) => {
         try {
+          // Special handling for Error objects - return them as-is
           if (obj instanceof Error) {
-            return {
-              message: obj.message,
-              stack: obj.stack,
-              name: obj.name,
-              ...obj // Spread to catch any custom properties
-            };
+            return obj;
+          }
+          
+          if (typeof obj === 'string') {
+            return obj;
           }
           
           // Handle circular references
@@ -561,6 +561,7 @@
             if (value instanceof Date) return value.toISOString();
             if (value === undefined) return 'undefined';
             if (Number.isNaN(value)) return 'NaN';
+            if (value instanceof Error) return value;
             return value;
           }, 2);
         } catch (err) {
@@ -582,15 +583,34 @@
             }
           }
 
-          // Format message with better object handling
+          // Format message with better error handling
           const formattedArgs = args.map(arg => {
             if (arg === null) return 'null';
             if (arg === undefined) return 'undefined';
+            if (arg instanceof Error) return arg;
             if (typeof arg === 'object') return safeStringify(arg);
             return String(arg);
           });
 
-          const message = formattedArgs.join(" ") + (stack ? '\n' + stack : "");
+          // Special handling for Error objects to preserve their format
+          let message;
+          let messageStr;
+          if (formattedArgs.length === 1 && formattedArgs[0] instanceof Error) {
+            message = formattedArgs[0];
+            messageStr = message.stack || message.message || String(message);
+          } else {
+            messageStr = formattedArgs.map(arg => 
+              arg instanceof Error ? 
+                (arg.stack || arg.message || String(arg)) : 
+                String(arg)
+            ).join(" ");
+            message = messageStr;
+          }
+
+          // Add stack trace if available and not already included
+          if (stack && !messageStr.includes(stack)) {
+            message = messageStr + '\n' + stack;
+          }
 
           // Extract path from error messages
           let path = null;
