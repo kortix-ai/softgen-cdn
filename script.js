@@ -511,83 +511,142 @@
   // Intercept console methods
   const setupConsoleInterception = (() => {
     let isSetup = false;
-    
+    let logSequence = 0;
+
     return () => {
       if (isSetup) return;
-      
+
       const originalMethods = {
         log: console.log,
+        info: console.info,
+        debug: console.debug,
         warn: console.warn,
-        error: console.error
+        error: console.error,
+        trace: console.trace
       };
-      
+
       const levelMap = {
         log: "info",
+        info: "info",
+        debug: "debug",
         warn: "warning",
-        error: "error"
+        error: "error",
+        trace: "trace"
       };
-      
+
+      // Helper to safely stringify objects
+      const safeStringify = (obj) => {
+        try {
+          if (obj instanceof Error) {
+            return {
+              message: obj.message,
+              stack: obj.stack,
+              name: obj.name,
+              ...obj // Spread to catch any custom properties
+            };
+          }
+          
+          // Handle circular references
+          const seen = new WeakSet();
+          return JSON.stringify(obj, (key, value) => {
+            if (typeof value === 'object' && value !== null) {
+              if (seen.has(value)) {
+                return '[Circular Reference]';
+              }
+              seen.add(value);
+            }
+            // Handle special types
+            if (value instanceof RegExp) return value.toString();
+            if (value instanceof Function) return value.toString();
+            if (value instanceof Date) return value.toISOString();
+            if (value === undefined) return 'undefined';
+            if (Number.isNaN(value)) return 'NaN';
+            return value;
+          }, 2);
+        } catch (err) {
+          return `[Unable to stringify: ${err.message}]`;
+        }
+      };
+
       const interceptConsoleMethod = (method) => {
         console[method] = function(...args) {
           // Call original method
           originalMethods[method].apply(console, args);
-          
-          // Get stack trace for warnings and errors
+
+          // Get stack trace for all levels except log and info
           let stack = null;
-          if (method === "warn" || method === "error") {
+          if (method !== "log" && method !== "info") {
             const error = new Error();
             if (error.stack) {
               stack = error.stack.split('\n').slice(2).join('\n');
             }
           }
-          
-          // Format message
-          const message = args.map(arg => 
-            typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-          ).join(" ") + (stack ? '\n' + stack : "");
-          
+
+          // Format message with better object handling
+          const formattedArgs = args.map(arg => {
+            if (arg === null) return 'null';
+            if (arg === undefined) return 'undefined';
+            if (typeof arg === 'object') return safeStringify(arg);
+            return String(arg);
+          });
+
+          const message = formattedArgs.join(" ") + (stack ? '\n' + stack : "");
+
           // Extract path from error messages
           let path = null;
-          
-          // For errors, try to extract path
-          if (method === "error") {
-            // First check the first argument which is usually the main message
-            if (typeof args[0] === 'string') {
-              path = extract404PathFromMessage(args[0]);
-            }
-            
-            // If no path found in the first arg, try the second one which might be a URL
-            if (!path && args.length > 1 && typeof args[1] === 'string') {
-              path = extractPathFromUrl(args[1]);
-            }
-            
-            // If still no path, check if any argument contains a URL
-            if (!path) {
-              for (const arg of args) {
-                if (typeof arg === 'string' && (arg.startsWith('http') || arg.startsWith('/'))) {
-                  path = extractPathFromUrl(arg);
-                  if (path) break;
-                }
+          if (method === "error" || method === "warn") {
+            // Check all arguments for potential paths
+            for (const arg of args) {
+              if (arg instanceof Error) {
+                path = extract404PathFromMessage(arg.message);
+                if (path) break;
+              } else if (typeof arg === 'string') {
+                path = extract404PathFromMessage(arg) || extractPathFromUrl(arg);
+                if (path) break;
               }
             }
           }
-          
-          // Send to parent
+
+          // Send to parent with sequence number
           sendMessageToParent({
             type: "CONSOLE_OUTPUT",
             level: levelMap[method],
             message: message,
             logged_at: new Date().toISOString(),
-            path: path
+            sequence: logSequence++,
+            path: path,
+            metadata: {
+              hasStack: !!stack,
+              argTypes: args.map(arg => typeof arg),
+              isError: args.some(arg => arg instanceof Error)
+            }
           });
         };
       };
-      
+
       // Intercept all console methods
-      interceptConsoleMethod("log");
-      interceptConsoleMethod("warn");
-      interceptConsoleMethod("error");
-      
+      Object.keys(originalMethods).forEach(interceptConsoleMethod);
+
+      // Also intercept console.assert
+      const originalAssert = console.assert;
+      console.assert = function(condition, ...args) {
+        originalAssert.apply(console, [condition, ...args]);
+        if (!condition) {
+          const message = args.length ? args.join(' ') : 'Assertion failed';
+          sendMessageToParent({
+            type: "CONSOLE_OUTPUT",
+            level: "error",
+            message: `Assertion failed: ${message}`,
+            logged_at: new Date().toISOString(),
+            sequence: logSequence++,
+            metadata: {
+              type: 'assertion',
+              condition: String(condition)
+            }
+          });
+        }
+      };
+
       isSetup = true;
     };
   })();
