@@ -594,6 +594,8 @@
   
   // Main initialization
   const initialize = () => {
+    console.log('Softgen Script.js Monitoring started');
+    
     if (window.location.search.includes("softgen-override-script")) {
       console.log("Overriding script with development version");
       return;
